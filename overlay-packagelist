@@ -1,0 +1,57 @@
+#!/usr/bin/env python
+
+import os
+import sys
+from collections import OrderedDict
+
+import portage
+import jinja2
+
+if not len(sys.argv) == 2 or sys.argv[1] == "--help":
+    sys.exit(print("usage: overlay-packagelist <template path>"))
+
+overlay_path = os.getcwd()
+# TODO We should actually check ./profiles/repo_name or ./metadata/layout.conf
+try:
+    with open(overlay_path + "/profiles/repo_name") as repo_name_file:
+        overlay_name = repo_name_file.readline().strip()
+except FileNotFoundError:
+    sys.exit("./profiles/repo_name not found. Please run overlay-packagelist from the root of an overlay")
+
+module_path = os.path.dirname(os.path.realpath(__file__))
+template_path = sys.argv[1]
+
+overlay_repository_config = """[%s]
+location = %s
+""" % (overlay_name, overlay_path)
+
+settings = portage.config()
+# Remove current overlay from list of system repos
+# This is to prevent failing because of duplicate keys
+if overlay_name in settings.repositories:
+    settings.repositories.__delitem__(overlay_name)
+# Recreate portage config, now with the current overlay added
+settings = portage.config(env={"PORTAGE_REPOSITORIES": settings.repositories.config_string() + "\n" + overlay_repository_config})
+
+# Create package database
+portdb = portage.portdbapi(mysettings=settings)
+# Filter so only the overlay is included
+portdb.porttrees = [overlay_path]
+
+packages = OrderedDict()
+
+for package in portdb.cp_all():
+    versions = portdb.cp_list(package)
+    if not versions:
+        continue
+    description, homepage_url = portdb.aux_get(versions[-1], ["DESCRIPTION", "HOMEPAGE"])
+    homepage = homepage_url.replace("https://", "").replace("http://", "")
+    versions = [portage.versions.cpv_getversion(version) for version in versions]
+    category, package_name = package.split("/")
+    packages.setdefault(category, [])
+    packages[category].append({"name": package_name, "description": description, "homepage": homepage, "homepage_url": homepage_url, "versions": versions})
+
+loader = jinja2.FileSystemLoader(overlay_path)
+jinja_env = jinja2.Environment(loader=loader)
+
+print(jinja_env.get_template(template_path).render(packages=packages))
