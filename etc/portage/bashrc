@@ -1,0 +1,6 @@
+function post_src_prepare() {
+  if [[ "$CATEGORY/$PN" = "dev-python/pip" ]]; then
+    echo "Reverting pip-disable-system-install.patch"
+    patch -p1 -R < "${FILESDIR}/pip-disable-system-install.patch"
+  fi
+}
